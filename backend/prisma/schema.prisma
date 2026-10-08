@@ -1,0 +1,336 @@
+// ──────────────────────────────────────────────────────────────────────────────
+// Manufacturing Management App — Prisma Schema
+// Database: PostgreSQL
+// ──────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ENUMS
+// ══════════════════════════════════════════════════════════════════════════════
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  OPERATOR
+  INVENTORY
+}
+
+enum MoState {
+  DRAFT
+  PLANNED
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum WoStatus {
+  TODO
+  STARTED
+  PAUSED
+  COMPLETED
+  CANCELED
+}
+
+enum StockMovementType {
+  OPENING
+  CONSUMPTION
+  PRODUCTION
+  MANUAL_ADJUSTMENT
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// USERS & AUTH
+// ══════════════════════════════════════════════════════════════════════════════
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  role         UserRole @default(OPERATOR)
+  passwordHash String   @map("password_hash")
+  phone        String?
+  avatarUrl    String?  @map("avatar_url")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  otpTokens          OtpToken[]
+  assignedWorkOrders WorkOrder[] @relation("WoAssignee")
+  assignedManufacturingOrders ManufacturingOrder[] @relation("MoAssignee")
+  woTimeLogs         WoTimeLog[]
+  woComments         WoComment[]
+
+  @@map("users")
+}
+
+model OtpToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  otpHash   String   @map("otp_hash")
+  expiresAt DateTime @map("expires_at")
+  attempts  Int      @default(0)
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("otp_tokens")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PRODUCTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+enum ProductType {
+  RAW
+  FINISHED
+}
+model Product {
+  id          String   @id @default(uuid())
+  name        String
+  sku         String   @unique
+  type        ProductType
+  uom         String
+  unitCost    Float    @default(0) @map("unit_cost")
+  reorderLevel Float   @default(0) @map("reorder_level")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  bomsAsFinishedGood   Bom[]              @relation("BomFinishedGood")
+  bomComponentsUsedIn  BomComponent[]     @relation("ComponentProduct")
+  moComponents        MoComponent[]
+  manufacturingOrders ManufacturingOrder[]
+  stockLedger          StockLedger[]
+
+  @@map("products")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// WORK CENTERS
+// ══════════════════════════════════════════════════════════════════════════════
+
+enum WorkCenterStatus {
+  ACTIVE
+  UNDER_MAINTENANCE
+}
+model WorkCenter {
+  id          String             @id @default(uuid())
+  name        String
+  code        String             @unique
+  description String?
+  costPerHour Float              @default(0) @map("cost_per_hour")
+  capacityPerDay Float           @default(0) @map("capacity_per_day")
+  status      WorkCenterStatus    @default(ACTIVE)
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+
+  downtimes     WorkCenterDowntime[]
+  bomOperations BomOperation[]
+  workOrders    WorkOrder[]
+
+  @@map("work_centers")
+}
+
+model WorkCenterDowntime {
+  id           String    @id @default(uuid())
+  workCenterId String    @map("work_center_id")
+  startAt      DateTime  @map("start_at")
+  endAt        DateTime? @map("end_at")
+  reason       String
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  workCenter WorkCenter @relation(fields: [workCenterId], references: [id], onDelete: Cascade)
+  
+  @@map("work_center_downtimes")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// BILLS OF MATERIALS (BOM)
+// ══════════════════════════════════════════════════════════════════════════════
+
+model Bom {
+  id             String   @id @default(uuid())
+  finishedGoodId String   @map("finished_good_id")
+  version        Int      @default(1)
+  referenceQty   Float    @default(1) @map("reference_qty")
+  isActive       Boolean  @default(true) @map("is_active")
+  notes          String?
+  createdBy      String   @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  finishedGood        Product              @relation("BomFinishedGood", fields: [finishedGoodId], references: [id])
+  components          BomComponent[]
+  operations          BomOperation[]
+  manufacturingOrders ManufacturingOrder[]
+
+  @@unique([finishedGoodId, version])
+  @@map("boms")
+}
+
+model BomComponent {
+  id          String   @id @default(uuid())
+  bomId       String   @map("bom_id")
+  productId   String   @map("product_id")
+  quantity    Float
+  unit        String
+  notes       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  bom     Bom     @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  product Product @relation("ComponentProduct", fields: [productId], references: [id])
+
+  @@map("bom_components")
+}
+
+model BomOperation {
+  id              String   @id @default(uuid())
+  bomId           String   @map("bom_id")
+  name            String
+  workCenterId    String   @map("work_center_id")
+  durationMins    Float    @map("duration_mins")
+  sequence        Int
+
+  bom        Bom        @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  workCenter WorkCenter @relation(fields: [workCenterId], references: [id])
+
+  @@map("bom_operations")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MANUFACTURING ORDERS (MO)
+// ══════════════════════════════════════════════════════════════════════════════
+
+model ManufacturingOrder {
+  id          String   @id @default(uuid())
+  reference   String   @unique
+  productId   String   @map("product_id")
+  bomId       String   @map("bom_id")
+  quantity    Float
+  startDate   DateTime @map("start_date")
+  deadline    DateTime
+  assigneeId  String?  @map("assignee_id")
+  assignee User? @relation("MoAssignee", fields: [assigneeId], references: [id])
+  state       MoState @default(DRAFT)
+  notes       String?
+  createdBy   String   @map("created_by")
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  product    Product       @relation(fields: [productId], references: [id])
+  bom        Bom           @relation(fields: [bomId], references: [id])
+  components MoComponent[]
+  workOrders WorkOrder[]
+
+  @@index([state, deadline])
+  @@map("manufacturing_orders")
+}
+
+model MoComponent {
+  id                   String   @id @default(uuid())
+  manufacturingOrderId String   @map("manufacturing_order_id")
+  productId            String   @map("product_id")
+  requiredQty          Float    @map("required_qty")
+  consumedQty          Float    @default(0) @map("consumed_qty")
+  unit                 String
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  manufacturingOrder ManufacturingOrder @relation(fields: [manufacturingOrderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("mo_components")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// WORK ORDERS (WO)
+// ══════════════════════════════════════════════════════════════════════════════
+
+model WorkOrder {
+  id                   String    @id @default(uuid())
+  reference            String    @unique
+  manufacturingOrderId String    @map("manufacturing_order_id")
+  workCenterId         String    @map("work_center_id")
+  assignedTo           String?   @map("assigned_to")
+  sequence             Int
+  operationName        String    @map("operation_name")
+  expectedMins         Float     @map("expected_mins")
+  actualMins            Float?    @map("actual_mins")
+  status               WoStatus  @default(TODO)
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  manufacturingOrder ManufacturingOrder @relation(fields: [manufacturingOrderId], references: [id], onDelete: Cascade)
+  workCenter WorkCenter @relation(fields: [workCenterId], references: [id])
+  assignee   User?      @relation("WoAssignee", fields: [assignedTo], references: [id])
+  timeLogs   WoTimeLog[]
+  comments   WoComment[]
+
+  @@index([assignedTo, status])
+  @@map("work_orders")
+}
+
+model WoTimeLog {
+  id          String    @id @default(uuid())
+  workOrderId String    @map("work_order_id")
+  userId      String    @map("user_id")
+  startedAt   DateTime  @map("started_at")
+  endedAt     DateTime? @map("ended_at")
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("wo_time_logs")
+}
+
+enum WoCommentType {
+  COMMENT
+  ISSUE
+  DELAY
+}
+
+model WoComment {
+  id          String         @id @default(uuid())
+  workOrderId String         @map("work_order_id")
+  userId      String         @map("user_id")
+  type        WoCommentType
+  text        String
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("wo_comments")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STOCK LEDGER
+// ══════════════════════════════════════════════════════════════════════════════
+
+
+model StockLedger {
+  id           String             @id @default(uuid())
+  productId    String             @map("product_id")
+  quantity     Float
+  movementType StockMovementType  @map("movement_type")
+  refType      String?            @map("ref_type")
+  refId        String?            @map("ref_id")
+  balanceAfter Float              @map("balance_after")
+  createdBy    String             @map("created_by")
+  createdAt    DateTime           @default(now()) @map("created_at")
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([productId, createdAt])
+  @@map("stock_ledger")
+}
