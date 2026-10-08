@@ -325,6 +325,7 @@ model StockLedger {
   movementType StockMovementType  @map("movement_type")
   refType      String?            @map("ref_type")
   refId        String?            @map("ref_id")
+  reason       String?
   balanceAfter Float              @map("balance_after")
   createdBy    String             @map("created_by")
   createdAt    DateTime           @default(now()) @map("created_at")
